@@ -21,24 +21,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
     "user_token": None,
-    "autopost": {
-        "enabled": False,
-        "channel_id": None,
-        "interval_seconds": 60,      # exact ce ai cerut
-        "message": "Hey, just checking in."
-    },
-    "autodm": {
-        "enabled": True,
-        "message": "Hey! Sorry, I'm a bit busy right now. I'll reply properly later 👀",
-        "cooldown_seconds": 25       # exact ce ai cerut
-    },
+    "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 60, "message": "Hey, just checking in."},
+    "autodm": {"enabled": True, "message": "Hey! Sorry, I'm a bit busy right now.", "cooldown_seconds": 25},
     "cooldowns": {}
 }
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)
-        return json.loads(json.dumps(DEFAULT_CONFIG))
+        return DEFAULT_CONFIG.copy()
     with open(CONFIG_FILE, encoding="utf-8") as f:
         data = json.load(f)
     for key, default_value in DEFAULT_CONFIG.items():
@@ -92,14 +83,11 @@ class StealthSelfBot:
 
     async def send_message(self, channel_id: str, base_content: str):
         await self._human_delay(0.7, 3.8)
-
-        # Typing realistic
         try:
             async with self.session.post(f"{DISCORD_API}/channels/{channel_id}/typing", headers={"Authorization": self.token}):
                 await asyncio.sleep(random.uniform(1.8, 6.2))
         except:
             pass
-
         await self._human_delay(1.1, 4.2)
 
         noise = "‎" * random.randint(0, 9)
@@ -107,22 +95,20 @@ class StealthSelfBot:
 
         url = f"{DISCORD_API}/channels/{channel_id}/messages"
         headers = {"Authorization": self.token, "Content-Type": "application/json"}
-        
         async with self.session.post(url, headers=headers, json={"content": content}) as r:
             if r.status in (200, 201):
                 logger.info(f"[+] Sent to {channel_id}")
             else:
                 logger.warning(f"[-] Failed {r.status}")
 
-    async def _run(self): 
+    async def _run(self):
         while self.running:
-            try: await self._connect()
-            except Exception as e: 
+            try:
+                await self._connect()
+            except Exception as e:
                 logger.error(f"Connection dropped: {e}")
             if self.running:
                 await asyncio.sleep(random.uniform(4, 12))
-
-    # _connect, _identify, _heartbeat, _handle_event rămân la fel ca înainte
 
     async def _connect(self):
         async with self.session.ws_connect("wss://gateway.discord.gg/?v=10&encoding=json") as ws:
@@ -187,7 +173,7 @@ class StealthSelfBot:
                     await self.send_message(cfg["channel_id"], cfg["message"])
                 except Exception as e:
                     logger.error(f"Autopost error: {e}")
-                await asyncio.sleep(60 + random.uniform(-4, 8))  # ~60 sec with small jitter
+                await asyncio.sleep(60 + random.uniform(-4, 8))
             else:
                 await asyncio.sleep(30)
 

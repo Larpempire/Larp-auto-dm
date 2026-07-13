@@ -16,6 +16,7 @@ def load_config():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {
+        "user_tokens": {},
         "autopost": {"enabled": False, "channel_id": None, "base_interval": 300, "message": "Mesaj auto."},
         "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "base_cooldown": 60},
         "cooldowns": {}
@@ -27,9 +28,14 @@ def save_config(cfg):
 
 config = load_config()
 
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 class StealthBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", self_bot=True)  # fără intents
+        super().__init__(command_prefix="!", intents=intents)
         self.http_session = None
 
     async def setup_hook(self):
@@ -37,74 +43,74 @@ class StealthBot(commands.Bot):
         print("[+] Stealth session ready")
 
     async def on_ready(self):
-        print(f"[+] ONLINE -> {self.user}")
-        if config["autopost"].get("enabled"):
-            autopost_loop.start()
+        await bot.tree.sync()
+        print(f"[+] Bot ONLINE -> {self.user}")
 
-    @tasks.loop(minutes=5)
-    async def autopost_loop(self):
-        if config["autopost"].get("enabled"):
+    # Send cu bypass avansat
+    async def send_message(self, channel_id, content, user_token=None):
+        if not user_token and config.get("user_tokens"):
+            user_token = list(config["user_tokens"].values())[0]
+        if not user_token:
+            return False
+
+        await asyncio.sleep(random.uniform(1.2, 4.8))
+
+        headers = {
+            "Authorization": user_token,
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "X-Super-Properties": "eyJvc3MiOiJXaW5kb3dzIiwgImJyb3dzZXIiOiJDaHJvbWUiLCAiZGV2aWNlIjoiZGVza3RvcCJ9",
+            "Referer": "https://discord.com/channels/@me",
+            "Origin": "https://discord.com"
+        }
+
+        if random.random() < 0.75:
             try:
-                channel = self.get_channel(int(config["autopost"]["channel_id"]))
-                if channel:
-                    content = config["autopost"]["message"] + "‎" * random.randint(0, 8)
-                    await asyncio.sleep(random.uniform(1.8, 5.2))
-                    if random.random() < 0.7:
-                        async with channel.typing():
-                            await asyncio.sleep(random.uniform(2.8, 7))
-                    await channel.send(content)
-                    print("[+] Autopost sent")
+                async with self.http_session.post(f"https://discord.com/api/v10/channels/{channel_id}/typing", headers={"Authorization": user_token}):
+                    pass
+            except: pass
+            await asyncio.sleep(random.uniform(2, 5.5))
+
+        content = content + "‎" * random.randint(0, 6)
+
+        for attempt in range(3):
+            try:
+                async with self.http_session.post(
+                    f"https://discord.com/api/v10/channels/{channel_id}/messages",
+                    headers=headers,
+                    json={"content": content}
+                ) as r:
+                    if r.status in (200, 201):
+                        print("[+] Message sent")
+                        return True
+                    elif r.status == 429:
+                        await asyncio.sleep(int(r.headers.get("Retry-After", 10)) + random.uniform(5, 15))
             except Exception as e:
-                print(f"[-] Error: {e}")
+                print(f"[-] Send error: {e}")
+            await asyncio.sleep(random.uniform(3, 8))
+        return False
 
-    async def on_message(self, message):
-        if message.author.id == self.user.id:
-            return
-        if config["autodm"].get("enabled") and message.guild is None:
-            key = str(message.author.id)
-            last = config.get("cooldowns", {}).get(key, 0)
-            if time.time() - last > config["autodm"]["base_cooldown"] + random.uniform(30, 70):
-                try:
-                    await asyncio.sleep(random.uniform(2, 6))
-                    await message.author.send(config["autodm"]["message"])
-                    config.setdefault("cooldowns", {})[key] = time.time()
-                    save_config(config)
-                except: pass
-        await self.process_commands(message)
+# Slash commands
+@bot.tree.command(name="add_user_token", description="Adauga user token")
+async def add_user_token(interaction: discord.Interaction, name: str, token: str):
+    config.setdefault("user_tokens", {})[name] = token
+    save_config(config)
+    await interaction.response.send_message(f"Token '{name}' adăugat!", ephemeral=True)
 
-    @discord.app_commands.command(name="ping", description="Test")
-    async def ping(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Stealth active.", ephemeral=True)
+@bot.tree.command(name="autopost", description="Configure autopost")
+async def autopost_cmd(interaction: discord.Interaction, enabled: bool, channel_id: str, interval: int, message: str):
+    config["autopost"] = {"enabled": enabled, "channel_id": channel_id, "base_interval": interval, "message": message}
+    save_config(config)
+    await interaction.response.send_message("Autopost configurat!", ephemeral=True)
 
-    async def close(self):
-        if self.http_session:
-            await self.http_session.close()
-        await super().close()
+@bot.tree.command(name="autodm", description="Configure autodm")
+async def autodm_cmd(interaction: discord.Interaction, enabled: bool, message: str, cooldown: int):
+    config["autodm"] = {"enabled": enabled, "message": message, "base_cooldown": cooldown}
+    save_config(config)
+    await interaction.response.send_message("Autodm configurat!", ephemeral=True)
 
-bot = StealthBot()
+@bot.tree.command(name="ping", description="Test")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("Hybrid bot active.", ephemeral=True)
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-def run_health():
-    port = int(os.getenv("PORT", 8080))
-    try:
-        server = ThreadingHTTPServer(('0.0.0.0', port), HealthHandler)
-        server.serve_forever()
-    except: pass
-
-if __name__ == "__main__":
-    threading.Thread(target=run_health, daemon=True).start()
-    
-    token = os.getenv("DISCORD_TOKEN")
-    if not token:
-        token = config.get("user_token")
-    
-    if token:
-        print("[+] Token loaded, starting...")
-        bot.run(token, bot=False)
-    else:
-        print("[-] NO TOKEN! Set DISCORD_TOKEN env var on Render.")
+bot.run(os.getenv("DISCORD_TOKEN"))

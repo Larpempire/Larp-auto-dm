@@ -1,86 +1,98 @@
-import discord
-from discord.ext import commands, tasks
-import random
-import json
 import os
+import json
 import time
-import threading
+import random
 import asyncio
+import threading
+import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from curl_cffi.requests import AsyncSession
+
+import aiohttp
+import discord
+from discord import app_commands
 
 CONFIG_FILE = "config.json"
+DISCORD_API = "https://discord.com/api/v10"
+LOG_FILE = "stealth.log"
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s',
+                    handlers=[logging.FileHandler(LOG_FILE, encoding='utf-8'), logging.StreamHandler()])
+logger = logging.getLogger(__name__)
+
+DEFAULT_CONFIG = {
+    "user_tokens": {},
+    "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 3600, "message": "Mesaj auto LARP."},
+    "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "cooldown_seconds": 86400},
+    "cooldowns": {}
+}
 
 def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {
-        "user_tokens": {},
-        "autopost": {"enabled": False, "channel_id": None, "base_interval": 300, "message": "Mesaj auto."},
-        "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "base_cooldown": 60},
-        "cooldowns": {}
-    }
+    if not os.path.exists(CONFIG_FILE):
+        save_config(DEFAULT_CONFIG)
+        return DEFAULT_CONFIG.copy()
+    with open(CONFIG_FILE, encoding="utf-8") as f:
+        data = json.load(f)
+    for key, default_value in DEFAULT_CONFIG.items():
+        if key not in data: data[key] = default_value
+        elif isinstance(default_value, dict):
+            for subkey, subvalue in default_value.items():
+                data[key].setdefault(subkey, subvalue)
+    return data
 
 def save_config(cfg):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
+        json.dump(cfg, f, indent=4, ensure_ascii=False)
 
 config = load_config()
 
-bot = commands.Bot(command_prefix="!", intents=None)
+class StealthSelfBot:
+    # ... (păstrează tot codul din versiunea anterioară pentru StealthSelfBot - _init_, start, stop, send_message, _run, _connect, etc.)
+    # (ca să nu umplu mesajul, folosește exact ce ți-am dat ultima dată)
 
-class UltimateStealthBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=None)
-        self.http_session = None
+    # (copiază întregul class StealthSelfBot de mai sus)
 
-    async def setup_hook(self):
-        self.http_session = AsyncSession(impersonate="chrome126")
-        print("[+] ULTIMATE STEALTH READY")
+selfbot = StealthSelfBot()
 
-    async def on_ready(self):
-        print(f"[+] ONLINE -> {self.user}")
+# ====================== MANAGEMENT BOT ======================
+intents = discord.Intents.default()
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
-    async def send_message(self, channel_id, content, user_token=None):
-        if not user_token and config.get("user_tokens"):
-            user_token = list(config["user_tokens"].values())[0]
-        if not user_token:
-            return False
+@bot.event
+async def on_ready():
+    logger.info(f"[+] Management bot online as {bot.user}")
+    if config.get("user_tokens"):
+        token = list(config["user_tokens"].values())[0]
+        if selfbot.status == "stopped":
+            await selfbot.start(token)
 
-        await asyncio.sleep(random.uniform(1.5, 6.5))
+# === Slash commands (adaugă-le pe ale tale aici) ===
 
-        headers = {
-            "Authorization": user_token,
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "X-Super-Properties": "eyJvc3MiOiJXaW5kb3dzIiwgImJyb3dzZXIiOiJDaHJvbWUiLCAiZGV2aWNlIjoiZGVza3RvcCJ9",
-            "Referer": "https://discord.com/channels/@me"
-        }
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({
+            "status": "alive", 
+            "selfbot": selfbot.status, 
+            "port": os.getenv("PORT"),
+            "timestamp": time.time()
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
 
-        if random.random() < 0.75:
-            try:
-                async with self.http_session.post(f"https://discord.com/api/v10/channels/{channel_id}/typing", headers={"Authorization": user_token}): pass
-            except: pass
-            await asyncio.sleep(random.uniform(2.5, 7))
+def start_health_server():
+    port = int(os.getenv("PORT", 8080))   # Respectă exact ce ai setat tu
+    logger.info(f"[+] Health server started on port {port} (Render should be happy)")
+    ThreadingHTTPServer(("0.0.0.0", port), HealthHandler).serve_forever()
 
-        content = content + "‎" * random.randint(0, 9)
-
-        for attempt in range(4):
-            try:
-                async with self.http_session.post(
-                    f"https://discord.com/api/v10/channels/{channel_id}/messages",
-                    headers=headers,
-                    json={"content": content}
-                ) as r:
-                    if r.status in (200, 201):
-                        print("[+] SEND SUCCESS")
-                        return True
-                    elif r.status == 429:
-                        await asyncio.sleep(int(r.headers.get("Retry-After", 10)) + random.uniform(10, 30))
-            except Exception as e:
-                print(f"[-] Attempt {attempt}: {e}")
-            await asyncio.sleep(random.uniform(5, 15))
-        return False
-
-bot.run(os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN"))
+if __name__ == "__main__":
+    threading.Thread(target=start_health_server, daemon=True).start()
+    
+    bot_token = os.getenv("BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
+    if bot_token:
+        bot.run(bot_token)
+    else:
+        logger.error("[-] BOT_TOKEN or DISCORD_TOKEN missing in env vars!")

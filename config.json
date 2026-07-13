@@ -1,0 +1,13 @@
+{
+    "autopost": {
+        "enabled": false,
+        "channel_id": null,
+        "interval_seconds": 3600,
+        "message": "Mesaj automat."
+    },
+    "autodm": {
+        "enabled": true,
+        "message": "Salut! Momentan nu sunt disponibil, revin cat pot.",
+        "cooldown_seconds": 86400
+    }
+}

@@ -83,4 +83,4 @@ class UltimateStealthBot(commands.Bot):
             await asyncio.sleep(random.uniform(5, 15))
         return False
 
-bot.run(os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN"))
+bot.run("MTUyNjE0NjExNTU4NDY1OTU2Ng.G4nHRk.R4G1Pt2-Femf_y6xsLAsfPBFKItrrkiKhMNuqE")

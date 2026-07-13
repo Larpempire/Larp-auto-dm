@@ -1,10 +1,13 @@
+
 services:
   - type: web
-    name: discord-selfbot
+    name: discord-controller-bot
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
-      - key: TOKEN
+      - key: BOT_TOKEN
+        sync: false
+      - key: GUILD_ID
         sync: false

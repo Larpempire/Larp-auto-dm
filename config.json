@@ -1,16 +1,15 @@
 {
-    "user_token": null,
-    "proxies": [],
-    "autopost": {
-        "enabled": false,
-        "channel_id": null,
-        "base_interval": 60,
-        "message": "Mesaj automat."
-    },
-    "autodm": {
-        "enabled": true,
-        "message": "Salut! Momentan nu sunt disponibil.",
-        "base_cooldown": 20
-    },
-    "cooldowns": {}
+  "user_token": "SCHIMBA_CU_TOKENUL_TAU",
+  "autopost": {
+    "enabled": false,
+    "channel_id": "ID_CHANNEL",
+    "base_interval": 240,
+    "message": "Mesaj automat stealth."
+  },
+  "autodm": {
+    "enabled": true,
+    "message": "Salut! Momentan nu sunt disponibil.",
+    "base_cooldown": 45
+  },
+  "cooldowns": {}
 }

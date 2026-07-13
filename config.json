@@ -1,6 +1,15 @@
 {
-  "user_tokens": {},
-  "autopost": {"enabled": false, "channel_id": "", "base_interval": 300, "message": "Mesaj auto."},
-  "autodm": {"enabled": true, "message": "Salut! Momentan nu sunt disponibil.", "base_cooldown": 60},
+  "user_token": null,
+  "autopost": {
+    "enabled": false,
+    "channel_id": "",
+    "interval_seconds": 60,
+    "message": "Hey, just checking in."
+  },
+  "autodm": {
+    "enabled": true,
+    "message": "Hey! Sorry, I'm a bit busy right now.",
+    "cooldown_seconds": 25
+  },
   "cooldowns": {}
 }

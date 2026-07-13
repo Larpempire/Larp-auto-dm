@@ -1,2 +1,2 @@
-discord.py-self
-python-dotenv
+discord.py
+aiohttp

@@ -1,20 +1,21 @@
 {
-    "user_token": null,
+    "user_token": "mfa.TOKEN_TAU_AICI",
     "proxies": [
-        "http://ip:port",
-        "http://user:pass@ip:port"
-        // adaugă oricâte vrei
+        "http://123.45.67.89:8080",
+        "http://user:pass@111.222.33.44:3128",
+        "http://45.67.89.12:4000",
+        "http://user2:pass2@98.76.54.32:8080"
     ],
     "autopost": {
-        "enabled": false,
-        "channel_id": null,
-        "interval_seconds": 60,
-        "messages": ["Mesaj automat 1.", "Mesaj automat 2."]
+        "enabled": true,
+        "channel_id": "ID_CANALULUI_TAU",
+        "base_interval": 60,
+        "message": "Mesaj automat."
     },
     "autodm": {
         "enabled": true,
-        "messages": ["Salut! Momentan nu sunt disponibil, revin curând."],
-        "cooldown_seconds": 20
+        "message": "Salut! Momentan nu sunt disponibil.",
+        "base_cooldown": 20
     },
     "cooldowns": {}
 }

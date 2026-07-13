@@ -29,6 +29,7 @@ def save_config(cfg):
 config = load_config()
 
 bot = commands.Bot(command_prefix="!", intents=None)
+tree = discord.app_commands.CommandTree(bot)  # FIX aici
 
 class UltimateStealthBot(commands.Bot):
     def __init__(self):
@@ -40,7 +41,7 @@ class UltimateStealthBot(commands.Bot):
         print("[+] ULTIMATE STEALTH READY")
 
     async def on_ready(self):
-        await bot.tree.sync()
+        await tree.sync()
         print(f"[+] ONLINE -> {self.user}")
 
     async def send_message(self, channel_id, content, user_token=None):
@@ -85,25 +86,25 @@ class UltimateStealthBot(commands.Bot):
         return False
 
 # Slash commands
-@bot.tree.command(name="add_user_token", description="Adauga user token")
+@tree.command(name="add_user_token", description="Adauga user token")
 async def add_user_token(interaction: discord.Interaction, name: str, token: str):
     config.setdefault("user_tokens", {})[name] = token
     save_config(config)
     await interaction.response.send_message(f"Token '{name}' added!", ephemeral=True)
 
-@bot.tree.command(name="autopost", description="Configure autopost")
+@tree.command(name="autopost", description="Configure autopost")
 async def autopost_cmd(interaction: discord.Interaction, enabled: bool, channel_id: str, interval: int, message: str):
     config["autopost"] = {"enabled": enabled, "channel_id": channel_id, "base_interval": interval, "message": message}
     save_config(config)
     await interaction.response.send_message("Autopost set!", ephemeral=True)
 
-@bot.tree.command(name="autodm", description="Configure autodm")
+@tree.command(name="autodm", description="Configure autodm")
 async def autodm_cmd(interaction: discord.Interaction, enabled: bool, message: str, cooldown: int):
     config["autodm"] = {"enabled": enabled, "message": message, "base_cooldown": cooldown}
     save_config(config)
     await interaction.response.send_message("Autodm set!", ephemeral=True)
 
-@bot.tree.command(name="ping", description="Test")
+@tree.command(name="ping", description="Test")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("ULTIMATE MODE ACTIVE", ephemeral=True)
 

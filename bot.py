@@ -27,8 +27,11 @@ def save_config(cfg):
 
 config = load_config()
 
-intents = discord.Intents.default()
+# Fix Intents pentru discord.py-self
+intents = discord.Intents.none()
 intents.message_content = True
+intents.guilds = True
+intents.dm_messages = True
 
 class StealthBot(commands.Bot):
     def __init__(self):
@@ -37,10 +40,10 @@ class StealthBot(commands.Bot):
 
     async def setup_hook(self):
         self.http_session = AsyncSession(impersonate="chrome126")
-        print("[+] Stealth session (chrome impersonate) ready")
+        print("[+] Stealth session ready")
 
     async def on_ready(self):
-        print(f"[+] SELF BOT ONLINE -> {self.user} | ID: {self.user.id}")
+        print(f"[+] SELF BOT ONLINE -> {self.user}")
         if config["autopost"].get("enabled"):
             autopost_loop.start()
 
@@ -58,12 +61,12 @@ class StealthBot(commands.Bot):
                     await channel.send(content)
                     print("[+] Autopost trimis")
             except Exception as e:
-                print(f"[-] Autopost error: {e}")
+                print(f"[-] Error: {e}")
 
     async def on_message(self, message):
         if message.author.id == self.user.id:
             return
-        if config["autodm"].get("enabled") and message.guild is None:
+        if config["autodm"].get("enabled") and isinstance(message.channel, discord.DMChannel):
             key = str(message.author.id)
             last = config.get("cooldowns", {}).get(key, 0)
             if time.time() - last > config["autodm"]["base_cooldown"] + random.uniform(30, 70):
@@ -90,7 +93,7 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"OK - StealthBot Running")
+        self.wfile.write(b"OK")
 
 def run_health():
     port = int(os.getenv("PORT", 8080))
@@ -109,4 +112,4 @@ if __name__ == "__main__":
     if token:
         bot.run(token, bot=False)
     else:
-        print("[-] Token missing! Set DISCORD_TOKEN env var on Render.")
+        print("[-] No token! Set DISCORD_TOKEN env var.")

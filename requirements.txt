@@ -1,2 +1,2 @@
-discord.py-self
-curl-cffi
+discord.py
+aiohttp

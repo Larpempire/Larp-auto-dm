@@ -29,7 +29,7 @@ def save_config(cfg):
 config = load_config()
 
 bot = commands.Bot(command_prefix="!", intents=None)
-tree = discord.app_commands.CommandTree(bot)  # FIX aici
+tree = discord.app_commands.CommandTree(bot)
 
 class UltimateStealthBot(commands.Bot):
     def __init__(self):
@@ -85,7 +85,7 @@ class UltimateStealthBot(commands.Bot):
             await asyncio.sleep(random.uniform(5, 15))
         return False
 
-# Slash commands
+# Slash
 @tree.command(name="add_user_token", description="Adauga user token")
 async def add_user_token(interaction: discord.Interaction, name: str, token: str):
     config.setdefault("user_tokens", {})[name] = token

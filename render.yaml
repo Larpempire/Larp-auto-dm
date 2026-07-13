@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: selfbot
+    name: selfbot-stealth
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py

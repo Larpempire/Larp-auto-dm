@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
     "user_token": None,
+    "proxies": [
+        "http://46.47.197.210:3128",
+        "http://79.174.12.190:80",
+        "http://2.56.178.88:808",
+        "socks5://195.19.50.180:1080",
+        "socks4://37.193.125.68:1090",
+        "socks5://37.220.86.195:1080",
+        "http://176.99.134.183:8090",
+        "http://31.28.4.192:80"
+    ],
     "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 60, "message": "Hey, just checking in."},
     "autodm": {"enabled": True, "message": "Hey! Sorry, I'm a bit busy right now.", "cooldown_seconds": 25},
     "cooldowns": {}
@@ -82,12 +92,20 @@ class StealthSelfBot:
         await asyncio.sleep(random.uniform(min_sec, max_sec))
 
     async def send_message(self, channel_id: str, base_content: str):
+        proxy = random.choice(config.get("proxies", [None])) if config.get("proxies") else None
+
         await self._human_delay(0.7, 3.8)
+
         try:
-            async with self.session.post(f"{DISCORD_API}/channels/{channel_id}/typing", headers={"Authorization": self.token}):
+            async with self.session.post(
+                f"{DISCORD_API}/channels/{channel_id}/typing", 
+                headers={"Authorization": self.token},
+                proxy=proxy
+            ):
                 await asyncio.sleep(random.uniform(1.8, 6.2))
         except:
             pass
+
         await self._human_delay(1.1, 4.2)
 
         noise = "‎" * random.randint(0, 9)
@@ -95,11 +113,15 @@ class StealthSelfBot:
 
         url = f"{DISCORD_API}/channels/{channel_id}/messages"
         headers = {"Authorization": self.token, "Content-Type": "application/json"}
-        async with self.session.post(url, headers=headers, json={"content": content}) as r:
-            if r.status in (200, 201):
-                logger.info(f"[+] Sent to {channel_id}")
-            else:
-                logger.warning(f"[-] Failed {r.status}")
+
+        try:
+            async with self.session.post(url, headers=headers, json={"content": content}, proxy=proxy) as r:
+                if r.status in (200, 201):
+                    logger.info(f"[+] Sent via {proxy or 'direct'}")
+                else:
+                    logger.warning(f"[-] Failed {r.status}")
+        except Exception as e:
+            logger.error(f"Proxy error: {e}")
 
     async def _run(self):
         while self.running:
@@ -186,18 +208,14 @@ tree = app_commands.CommandTree(bot)
 @bot.event
 async def on_ready():
     logger.info(f"[+] Management bot online as {bot.user}")
-    
-    # Force sync commands
     try:
         synced = await tree.sync()
-        logger.info(f"[+] Synced {len(synced)} slash commands")
+        logger.info(f"[+] Synced {len(synced)} commands")
     except Exception as e:
         logger.error(f"Sync error: {e}")
 
     if config.get("user_token") and selfbot.status == "stopped":
         await selfbot.start(config["user_token"])
-
-# ==================== COMENZI ====================
 
 class TokenModal(discord.ui.Modal, title="Setup Stealth Account"):
     token = discord.ui.TextInput(label="User Token", placeholder="Paste real account token")
@@ -231,9 +249,8 @@ async def autodm_cmd(interaction: discord.Interaction, enabled: bool, message: s
 
 @tree.command(name="status", description="Check status")
 async def status_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(f"**Selfbot Status:** {selfbot.status}\nAutopost: {config['autopost']['enabled']}\nAutodm: {config['autodm']['enabled']}", ephemeral=True)
+    await interaction.response.send_message(f"**Selfbot Status:** {selfbot.status}", ephemeral=True)
 
-# ==================== HEALTH SERVER ====================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         body = json.dumps({"status": "alive", "selfbot": selfbot.status}).encode()

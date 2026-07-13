@@ -1,13 +1,20 @@
 {
+    "user_token": null,
+    "proxies": [
+        "http://ip:port",
+        "http://user:pass@ip:port"
+        // adaugă oricâte vrei
+    ],
     "autopost": {
         "enabled": false,
         "channel_id": null,
-        "interval_seconds": 3600,
-        "message": "Mesaj automat."
+        "interval_seconds": 60,
+        "messages": ["Mesaj automat 1.", "Mesaj automat 2."]
     },
     "autodm": {
         "enabled": true,
-        "message": "Salut! Momentan nu sunt disponibil, revin cat pot.",
-        "cooldown_seconds": 86400
-    }
+        "messages": ["Salut! Momentan nu sunt disponibil, revin curând."],
+        "cooldown_seconds": 20
+    },
+    "cooldowns": {}
 }

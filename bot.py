@@ -31,8 +31,8 @@ DEFAULT_CONFIG = {
         "http://176.99.134.183:8090",
         "http://31.28.4.192:80"
     ],
-    "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 60, "message": "Hey, just checking in."},
-    "autodm": {"enabled": True, "message": "Hey! Sorry, I'm a bit busy right now.", "cooldown_seconds": 25},
+    "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 180, "message": "Hey, just checking in."},
+    "autodm": {"enabled": True, "message": "Hey! Sorry, I'm a bit busy right now.", "cooldown_seconds": 60},
     "cooldowns": {}
 }
 
@@ -60,13 +60,8 @@ class StealthSelfBot:
     def __init__(self):
         self.token = None
         self.session = None
-        self.ws = None
-        self.user = None
-        self.seq = None
         self.running = False
         self.status = "stopped"
-        self._task = None
-        self._autopost_task = None
 
     async def validate_token(self, token: str):
         async with aiohttp.ClientSession() as s:
@@ -74,28 +69,23 @@ class StealthSelfBot:
                 return await r.json() if r.status == 200 else None
 
     async def start(self, token: str):
-        await self.stop()
         self.token = token
         self.running = True
-        self.status = "connecting"
-        self.session = aiohttp.ClientSession()
-        self._task = asyncio.create_task(self._run())
+        self.status = "online"
+        logger.info(f"[+] Stealth HTTP SelfBot started")
+        self._autopost_task = asyncio.create_task(self._autopost_loop())
 
     async def stop(self):
         self.running = False
-        if self._autopost_task: self._autopost_task.cancel()
-        if self.ws and not self.ws.closed: await self.ws.close()
-        if self.session and not self.session.closed: await self.session.close()
         self.status = "stopped"
-
-    async def _human_delay(self, min_sec=0.9, max_sec=5.5):
-        await asyncio.sleep(random.uniform(min_sec, max_sec))
+        if hasattr(self, '_autopost_task'):
+            self._autopost_task.cancel()
 
     async def send_message(self, channel_id: str, base_content: str):
         proxy = random.choice(config.get("proxies", [None])) if config.get("proxies") else None
-        logger.info(f"[DEBUG] Attempting send to {channel_id} via {proxy or 'direct'}")
+        logger.info(f"[DEBUG] Sending to {channel_id} via {proxy or 'direct'}")
 
-        await self._human_delay(0.7, 3.8)
+        await asyncio.sleep(random.uniform(1.2, 4.8))
 
         try:
             async with self.session.post(
@@ -103,14 +93,14 @@ class StealthSelfBot:
                 headers={"Authorization": self.token},
                 proxy=proxy
             ):
-                await asyncio.sleep(random.uniform(1.8, 6.2))
-        except Exception as e:
-            logger.warning(f"Typing failed: {e}")
+                await asyncio.sleep(random.uniform(2.5, 7.5))
+        except:
+            pass
 
-        await self._human_delay(1.1, 4.2)
+        await asyncio.sleep(random.uniform(1.5, 5.2))
 
-        noise = "‎" * random.randint(0, 9)
-        content = base_content + noise + random.choice(["", " ", "🙂", "🔥", "👀"])
+        noise = "‎" * random.randint(0, 12)
+        content = base_content + noise + random.choice(["", " ", "🙂", "🔥", "👀", "👍"])
 
         url = f"{DISCORD_API}/channels/{channel_id}/messages"
         headers = {"Authorization": self.token, "Content-Type": "application/json"}
@@ -118,76 +108,12 @@ class StealthSelfBot:
         try:
             async with self.session.post(url, headers=headers, json={"content": content}, proxy=proxy) as r:
                 if r.status in (200, 201):
-                    logger.info(f"[+] SUCCESS Sent to {channel_id}")
+                    logger.info(f"[+] SUCCESS Sent!")
                 else:
                     text = await r.text()
-                    logger.warning(f"[-] Failed {r.status} - {text[:150]}")
+                    logger.warning(f"[-] Failed {r.status} - {text[:100]}")
         except Exception as e:
             logger.error(f"Send error: {e}")
-
-    async def _run(self):
-        while self.running:
-            try:
-                await self._connect()
-            except Exception as e:
-                logger.error(f"Connection dropped: {e}")
-            if self.running:
-                await asyncio.sleep(random.uniform(4, 12))
-
-    async def _connect(self):
-        async with self.session.ws_connect("wss://gateway.discord.gg/?v=10&encoding=json") as ws:
-            self.ws = ws
-            hb_task = None
-            async for msg in ws:
-                if msg.type != aiohttp.WSMsgType.TEXT: continue
-                data = json.loads(msg.data)
-                if data.get("s") is not None: self.seq = data["s"]
-                op = data.get("op")
-                if op == 10:
-                    interval = data["d"]["heartbeat_interval"] / 1000
-                    hb_task = asyncio.create_task(self._heartbeat(ws, interval))
-                    await ws.send_json(self._identify())
-                elif op == 0:
-                    await self._handle_event(data)
-                elif op == 1:
-                    await ws.send_json({"op": 1, "d": self.seq})
-                elif op == 9:
-                    break
-            if hb_task: hb_task.cancel()
-
-    def _identify(self):
-        return {"op": 2, "d": {"token": self.token, "capabilities": 8189, "properties": {"os": "Windows", "browser": "Chrome", "device": ""}, "compress": False}}
-
-    async def _heartbeat(self, ws, interval):
-        while True:
-            await asyncio.sleep(interval + random.uniform(-2, 3.5))
-            try: await ws.send_json({"op": 1, "d": self.seq})
-            except: return
-
-    async def _handle_event(self, data):
-        t = data.get("t")
-        d = data.get("d", {})
-        if t == "READY":
-            self.user = d.get("user", {})
-            self.status = "online"
-            logger.info(f"[+] Logged in as {self.user.get('username')}")
-            self._autopost_task = asyncio.create_task(self._autopost_loop())
-        elif t == "MESSAGE_CREATE":
-            await self._on_message(d)
-
-    async def _on_message(self, msg):
-        if msg.get("guild_id"): return
-        author = msg.get("author", {})
-        if not self.user or author.get("id") == self.user.get("id"): return
-        cfg = config["autodm"]
-        if not cfg.get("enabled"): return
-        user_id = str(author.get("id"))
-        now = int(time.time())
-        cooldown = cfg.get("cooldown_seconds", 25)
-        if now < config["cooldowns"].get(user_id, 0) + cooldown + random.randint(-8, 12): return
-        config["cooldowns"][user_id] = now
-        save_config(config)
-        await self.send_message(msg["channel_id"], cfg["message"])
 
     async def _autopost_loop(self):
         while self.running:
@@ -197,7 +123,7 @@ class StealthSelfBot:
                     await self.send_message(cfg["channel_id"], cfg["message"])
                 except Exception as e:
                     logger.error(f"Autopost error: {e}")
-                await asyncio.sleep(60 + random.uniform(-4, 8))
+                await asyncio.sleep(cfg.get("interval_seconds", 180) + random.uniform(-15, 25))
             else:
                 await asyncio.sleep(30)
 
@@ -211,14 +137,15 @@ tree = app_commands.CommandTree(bot)
 async def on_ready():
     logger.info(f"[+] Management bot online as {bot.user}")
     try:
-        synced = await tree.sync()
-        logger.info(f"[+] Synced {len(synced)} commands")
+        await tree.sync()
+        logger.info("[+] Commands synced")
     except Exception as e:
         logger.error(f"Sync error: {e}")
 
-    if config.get("user_token") and selfbot.status == "stopped":
+    if config.get("user_token"):
         await selfbot.start(config["user_token"])
 
+# ==================== COMENZI ====================
 class TokenModal(discord.ui.Modal, title="Setup Stealth Account"):
     token = discord.ui.TextInput(label="User Token", placeholder="Paste real account token")
     async def on_submit(self, interaction: discord.Interaction):
@@ -241,23 +168,24 @@ async def setup_token(interaction: discord.Interaction):
 async def autopost_cmd(interaction: discord.Interaction, enabled: bool, channel_id: str, interval: int, message: str):
     config["autopost"] = {"enabled": enabled, "channel_id": channel_id, "interval_seconds": interval, "message": message}
     save_config(config)
-    await interaction.response.send_message(f"Autopost: {'ON' if enabled else 'OFF'} | Interval: {interval}s", ephemeral=True)
+    await interaction.response.send_message(f"Autopost set.", ephemeral=True)
 
 @tree.command(name="autodm", description="Configure autodm")
 async def autodm_cmd(interaction: discord.Interaction, enabled: bool, message: str, cooldown: int):
     config["autodm"] = {"enabled": enabled, "message": message, "cooldown_seconds": cooldown}
     save_config(config)
-    await interaction.response.send_message(f"Autodm: {'ON' if enabled else 'OFF'} | Cooldown: {cooldown}s", ephemeral=True)
+    await interaction.response.send_message(f"Autodm set.", ephemeral=True)
 
 @tree.command(name="status", description="Check status")
 async def status_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(f"**Selfbot Status:** {selfbot.status}\nAutopost: {config['autopost']['enabled']}\nAutodm: {config['autodm']['enabled']}", ephemeral=True)
+    await interaction.response.send_message(f"**Status:** {selfbot.status}", ephemeral=True)
 
 @tree.command(name="stop", description="Stop selfbot")
 async def stop_cmd(interaction: discord.Interaction):
     await selfbot.stop()
     await interaction.response.send_message("Selfbot stopped.", ephemeral=True)
 
+# Health Server
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         body = json.dumps({"status": "alive", "selfbot": selfbot.status}).encode()

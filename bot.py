@@ -93,6 +93,7 @@ class StealthSelfBot:
 
     async def send_message(self, channel_id: str, base_content: str):
         proxy = random.choice(config.get("proxies", [None])) if config.get("proxies") else None
+        logger.info(f"[DEBUG] Attempting send to {channel_id} via {proxy or 'direct'}")
 
         await self._human_delay(0.7, 3.8)
 
@@ -103,8 +104,8 @@ class StealthSelfBot:
                 proxy=proxy
             ):
                 await asyncio.sleep(random.uniform(1.8, 6.2))
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Typing failed: {e}")
 
         await self._human_delay(1.1, 4.2)
 
@@ -117,11 +118,12 @@ class StealthSelfBot:
         try:
             async with self.session.post(url, headers=headers, json={"content": content}, proxy=proxy) as r:
                 if r.status in (200, 201):
-                    logger.info(f"[+] Sent via {proxy or 'direct'}")
+                    logger.info(f"[+] SUCCESS Sent to {channel_id}")
                 else:
-                    logger.warning(f"[-] Failed {r.status}")
+                    text = await r.text()
+                    logger.warning(f"[-] Failed {r.status} - {text[:150]}")
         except Exception as e:
-            logger.error(f"Proxy error: {e}")
+            logger.error(f"Send error: {e}")
 
     async def _run(self):
         while self.running:
@@ -249,7 +251,12 @@ async def autodm_cmd(interaction: discord.Interaction, enabled: bool, message: s
 
 @tree.command(name="status", description="Check status")
 async def status_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(f"**Selfbot Status:** {selfbot.status}", ephemeral=True)
+    await interaction.response.send_message(f"**Selfbot Status:** {selfbot.status}\nAutopost: {config['autopost']['enabled']}\nAutodm: {config['autodm']['enabled']}", ephemeral=True)
+
+@tree.command(name="stop", description="Stop selfbot")
+async def stop_cmd(interaction: discord.Interaction):
+    await selfbot.stop()
+    await interaction.response.send_message("Selfbot stopped.", ephemeral=True)
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):

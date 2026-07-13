@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -187,8 +186,18 @@ tree = app_commands.CommandTree(bot)
 @bot.event
 async def on_ready():
     logger.info(f"[+] Management bot online as {bot.user}")
+    
+    # Force sync commands
+    try:
+        synced = await tree.sync()
+        logger.info(f"[+] Synced {len(synced)} slash commands")
+    except Exception as e:
+        logger.error(f"Sync error: {e}")
+
     if config.get("user_token") and selfbot.status == "stopped":
         await selfbot.start(config["user_token"])
+
+# ==================== COMENZI ====================
 
 class TokenModal(discord.ui.Modal, title="Setup Stealth Account"):
     token = discord.ui.TextInput(label="User Token", placeholder="Paste real account token")
@@ -208,6 +217,23 @@ class TokenModal(discord.ui.Modal, title="Setup Stealth Account"):
 async def setup_token(interaction: discord.Interaction):
     await interaction.response.send_modal(TokenModal())
 
+@tree.command(name="autopost", description="Configure autopost")
+async def autopost_cmd(interaction: discord.Interaction, enabled: bool, channel_id: str, interval: int, message: str):
+    config["autopost"] = {"enabled": enabled, "channel_id": channel_id, "interval_seconds": interval, "message": message}
+    save_config(config)
+    await interaction.response.send_message(f"Autopost: {'ON' if enabled else 'OFF'} | Interval: {interval}s", ephemeral=True)
+
+@tree.command(name="autodm", description="Configure autodm")
+async def autodm_cmd(interaction: discord.Interaction, enabled: bool, message: str, cooldown: int):
+    config["autodm"] = {"enabled": enabled, "message": message, "cooldown_seconds": cooldown}
+    save_config(config)
+    await interaction.response.send_message(f"Autodm: {'ON' if enabled else 'OFF'} | Cooldown: {cooldown}s", ephemeral=True)
+
+@tree.command(name="status", description="Check status")
+async def status_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(f"**Selfbot Status:** {selfbot.status}\nAutopost: {config['autopost']['enabled']}\nAutodm: {config['autodm']['enabled']}", ephemeral=True)
+
+# ==================== HEALTH SERVER ====================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         body = json.dumps({"status": "alive", "selfbot": selfbot.status}).encode()

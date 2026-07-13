@@ -15,24 +15,30 @@ CONFIG_FILE = "config.json"
 DISCORD_API = "https://discord.com/api/v10"
 LOG_FILE = "stealth.log"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s',
-    handlers=[logging.FileHandler(LOG_FILE, encoding='utf-8'), logging.StreamHandler()]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s',
+                    handlers=[logging.FileHandler(LOG_FILE, encoding='utf-8'), logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
-    "user_tokens": {},
-    "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 3600, "message": "Mesaj auto LARP."},
-    "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "cooldown_seconds": 86400},
+    "user_token": None,
+    "autopost": {
+        "enabled": False,
+        "channel_id": None,
+        "interval_seconds": 60,      # exact ce ai cerut
+        "message": "Hey, just checking in."
+    },
+    "autodm": {
+        "enabled": True,
+        "message": "Hey! Sorry, I'm a bit busy right now. I'll reply properly later 👀",
+        "cooldown_seconds": 25       # exact ce ai cerut
+    },
     "cooldowns": {}
 }
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
+        return json.loads(json.dumps(DEFAULT_CONFIG))
     with open(CONFIG_FILE, encoding="utf-8") as f:
         data = json.load(f)
     for key, default_value in DEFAULT_CONFIG.items():
@@ -76,59 +82,56 @@ class StealthSelfBot:
 
     async def stop(self):
         self.running = False
-        if self._autopost_task:
-            self._autopost_task.cancel()
-            self._autopost_task = None
-        if self.ws and not self.ws.closed:
-            await self.ws.close()
-        if self.session and not self.session.closed:
-            await self.session.close()
+        if self._autopost_task: self._autopost_task.cancel()
+        if self.ws and not self.ws.closed: await self.ws.close()
+        if self.session and not self.session.closed: await self.session.close()
         self.status = "stopped"
 
-    async def _human_delay(self, min_sec=0.8, max_sec=4.5):
+    async def _human_delay(self, min_sec=0.9, max_sec=5.5):
         await asyncio.sleep(random.uniform(min_sec, max_sec))
 
-    async def send_message(self, channel_id: str, content: str):
-        await self._human_delay(0.6, 2.8)
+    async def send_message(self, channel_id: str, base_content: str):
+        await self._human_delay(0.7, 3.8)
+
+        # Typing realistic
         try:
-            async with self.session.post(
-                f"{DISCORD_API}/channels/{channel_id}/typing",
-                headers={"Authorization": self.token}
-            ):
-                pass
+            async with self.session.post(f"{DISCORD_API}/channels/{channel_id}/typing", headers={"Authorization": self.token}):
+                await asyncio.sleep(random.uniform(1.8, 6.2))
         except:
             pass
-        await self._human_delay(1.5, 5.0)
 
-        content = content + "‎" * random.randint(0, 12)
+        await self._human_delay(1.1, 4.2)
+
+        noise = "‎" * random.randint(0, 9)
+        content = base_content + noise + random.choice(["", " ", "🙂", "🔥", "👀"])
+
         url = f"{DISCORD_API}/channels/{channel_id}/messages"
         headers = {"Authorization": self.token, "Content-Type": "application/json"}
         
         async with self.session.post(url, headers=headers, json={"content": content}) as r:
             if r.status in (200, 201):
-                logger.info(f"[+] SEND SUCCESS to {channel_id}")
+                logger.info(f"[+] Sent to {channel_id}")
             else:
-                logger.warning(f"[-] Send failed {r.status}")
+                logger.warning(f"[-] Failed {r.status}")
 
-    async def _run(self):
+    async def _run(self): 
         while self.running:
-            try:
-                await self._connect()
-            except Exception as e:
+            try: await self._connect()
+            except Exception as e: 
                 logger.error(f"Connection dropped: {e}")
             if self.running:
-                await asyncio.sleep(random.uniform(5, 15))
+                await asyncio.sleep(random.uniform(4, 12))
+
+    # _connect, _identify, _heartbeat, _handle_event rămân la fel ca înainte
 
     async def _connect(self):
         async with self.session.ws_connect("wss://gateway.discord.gg/?v=10&encoding=json") as ws:
             self.ws = ws
             hb_task = None
             async for msg in ws:
-                if msg.type != aiohttp.WSMsgType.TEXT:
-                    continue
+                if msg.type != aiohttp.WSMsgType.TEXT: continue
                 data = json.loads(msg.data)
-                if data.get("s") is not None:
-                    self.seq = data["s"]
+                if data.get("s") is not None: self.seq = data["s"]
                 op = data.get("op")
                 if op == 10:
                     interval = data["d"]["heartbeat_interval"] / 1000
@@ -140,27 +143,16 @@ class StealthSelfBot:
                     await ws.send_json({"op": 1, "d": self.seq})
                 elif op == 9:
                     break
-            if hb_task:
-                hb_task.cancel()
+            if hb_task: hb_task.cancel()
 
     def _identify(self):
-        return {
-            "op": 2,
-            "d": {
-                "token": self.token,
-                "capabilities": 8189,
-                "properties": {"os": "Windows", "browser": "Chrome", "device": ""},
-                "compress": False,
-            }
-        }
+        return {"op": 2, "d": {"token": self.token, "capabilities": 8189, "properties": {"os": "Windows", "browser": "Chrome", "device": ""}, "compress": False}}
 
     async def _heartbeat(self, ws, interval):
         while True:
-            await asyncio.sleep(interval + random.uniform(-2, 3))
-            try:
-                await ws.send_json({"op": 1, "d": self.seq})
-            except:
-                return
+            await asyncio.sleep(interval + random.uniform(-2, 3.5))
+            try: await ws.send_json({"op": 1, "d": self.seq})
+            except: return
 
     async def _handle_event(self, data):
         t = data.get("t")
@@ -174,23 +166,18 @@ class StealthSelfBot:
             await self._on_message(d)
 
     async def _on_message(self, msg):
-        if msg.get("guild_id"):
-            return
+        if msg.get("guild_id"): return
         author = msg.get("author", {})
-        if not self.user or author.get("id") == self.user.get("id"):
-            return
+        if not self.user or author.get("id") == self.user.get("id"): return
         cfg = config["autodm"]
-        if not cfg.get("enabled"):
-            return
+        if not cfg.get("enabled"): return
         user_id = str(author.get("id"))
         now = int(time.time())
-        cooldown = cfg.get("cooldown_seconds", 86400)
-        if now < config["cooldowns"].get(user_id, 0) + cooldown + random.randint(-300, 600):
-            return
+        cooldown = cfg.get("cooldown_seconds", 25)
+        if now < config["cooldowns"].get(user_id, 0) + cooldown + random.randint(-8, 12): return
         config["cooldowns"][user_id] = now
         save_config(config)
         await self.send_message(msg["channel_id"], cfg["message"])
-        logger.info(f"[+] AutoDM sent to {author.get('username')}")
 
     async def _autopost_loop(self):
         while self.running:
@@ -200,15 +187,12 @@ class StealthSelfBot:
                     await self.send_message(cfg["channel_id"], cfg["message"])
                 except Exception as e:
                     logger.error(f"Autopost error: {e}")
-                base = cfg.get("interval_seconds", 3600)
-                jitter = random.randint(-1200, 1800)
-                await asyncio.sleep(max(60, base + jitter))
+                await asyncio.sleep(60 + random.uniform(-4, 8))  # ~60 sec with small jitter
             else:
                 await asyncio.sleep(30)
 
 selfbot = StealthSelfBot()
 
-# ====================== MANAGEMENT BOT ======================
 intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
@@ -216,19 +200,30 @@ tree = app_commands.CommandTree(bot)
 @bot.event
 async def on_ready():
     logger.info(f"[+] Management bot online as {bot.user}")
-    if config.get("user_tokens"):
-        token = list(config["user_tokens"].values())[0]
-        if selfbot.status == "stopped":
-            await selfbot.start(token)
+    if config.get("user_token") and selfbot.status == "stopped":
+        await selfbot.start(config["user_token"])
+
+class TokenModal(discord.ui.Modal, title="Setup Stealth Account"):
+    token = discord.ui.TextInput(label="User Token", placeholder="Paste real account token")
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        tok = str(self.token.value).strip()
+        user = await selfbot.validate_token(tok)
+        if not user:
+            await interaction.followup.send("Invalid token.", ephemeral=True)
+            return
+        config["user_token"] = tok
+        save_config(config)
+        await selfbot.start(tok)
+        await interaction.followup.send("✅ Connected.", ephemeral=True)
+
+@tree.command(name="setup-token", description="Connect stealth account")
+async def setup_token(interaction: discord.Interaction):
+    await interaction.response.send_modal(TokenModal())
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps({
-            "status": "alive",
-            "selfbot": selfbot.status,
-            "port": os.getenv("PORT"),
-            "timestamp": time.time()
-        }).encode()
+        body = json.dumps({"status": "alive", "selfbot": selfbot.status}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -238,14 +233,12 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def start_health_server():
     port = int(os.getenv("PORT", 8080))
-    logger.info(f"[+] Health server started on port {port}")
     ThreadingHTTPServer(("0.0.0.0", port), HealthHandler).serve_forever()
 
 if __name__ == "__main__":
     threading.Thread(target=start_health_server, daemon=True).start()
-    
-    bot_token = os.getenv("BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
     if bot_token:
         bot.run(bot_token)
     else:
-        logger.error("[-] BOT_TOKEN or DISCORD_TOKEN missing!")
+        logger.error("[ERROR] BOT_TOKEN missing")

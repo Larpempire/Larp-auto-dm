@@ -1,118 +1,95 @@
-import os
-import json
-import time
-import random
-import asyncio
-import threading
-import aiohttp
 import discord
-from discord import app_commands
+from discord.ext import commands, tasks
+import random
+import json
+import os
+import time
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CONFIG_FILE = "config.json"
-API = "https://discord.com/api/v10"
 
-DEFAULT_CONFIG = {
-    "user_token": None,
-    "proxies": [],
-    "autopost": {"enabled": False, "channel_id": None, "base_interval": 60, "message": "Mesaj automat."},
-    "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "base_cooldown": 20},
-    "cooldowns": {}
-}
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {
+        "user_token": None,
+        "autopost": {"enabled": False, "channel_id": None, "base_interval": 240, "message": "Mesaj auto."},
+        "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "base_cooldown": 45},
+        "cooldowns": {}
+    }
 
-def load_config(): ... # (la fel ca înainte)
-def save_config(cfg): ... # (la fel)
+def save_config(cfg):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
 
 config = load_config()
 
-class SelfBot:
+intents = discord.Intents.default()
+intents.message_content = True
+
+class StealthSelfBot(commands.Bot):
     def __init__(self):
-        self.token = None
-        self.session = None
-        self.ws = None
-        self.user = None
-        self.seq = None
-        self.running = False
-        self.status = "stopped"
-        self.proxy_index = 0
-        self.last_action = 0
-        self.user_agents = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"]
+        super().__init__(command_prefix="!", self_bot=True, intents=intents)
 
-    def get_proxy(self):
-        if not config["proxies"]: return None
-        p = config["proxies"][self.proxy_index % len(config["proxies"])]
-        self.proxy_index += 1
-        return p
+    async def on_ready(self):
+        print(f"[+] StealthSelfBot ONLINE -> {self.user}")
+        if config["autopost"]["enabled"]:
+            autopost_loop.start()
 
-    async def start(self, token):
-        await self.stop()
-        self.token = token
-        self.running = True
-        self.session = aiohttp.ClientSession()
-        asyncio.create_task(self._run())
-
-    async def _run(self):
-        while self.running:
+    @tasks.loop(minutes=5)  # delay mare
+    async def autopost_loop(self):
+        if config["autopost"].get("enabled"):
             try:
-                proxy = self.get_proxy()
-                headers = {"User-Agent": random.choice(self.user_agents)}
-                async with self.session.ws_connect("wss://gateway.discord.gg/?v=10&encoding=json", proxy=proxy, headers=headers) as ws:
-                    self.ws = ws
-                    await self._identify()
-                    await self._gateway_loop()
-            except:
-                await asyncio.sleep(random.uniform(3, 8))
+                channel = self.get_channel(int(config["autopost"]["channel_id"]))
+                if channel:
+                    content = config["autopost"]["message"] + "‎" * random.randint(0, 7)
+                    await asyncio.sleep(random.uniform(1.5, 4.5))
+                    if random.random() < 0.6:
+                        async with channel.typing():
+                            await asyncio.sleep(random.uniform(2, 5))
+                    await channel.send(content)
+                    print("[+] Autopost sent")
+            except Exception as e:
+                print(f"[-] Autopost error: {e}")
 
-    def _identify(self):
-        return {"op": 2, "d": {
-            "token": self.token,
-            "capabilities": 8189,
-            "properties": {"os": "Windows", "browser": "Chrome", "device": "desktop"},
-            "presence": {"status": random.choice(["online", "idle"]), "since": int(time.time()*1000), "activities": [], "afk": False}
-        }}
-
-    async def _gateway_loop(self): ... # (la fel ca înainte, cu _on_message)
-
-    async def send_message(self, channel_id, content):
-        # Extra stealth
-        proxy = self.get_proxy()
-        ua = random.choice(self.user_agents)
-        await asyncio.sleep(random.uniform(0.8, 3.5))  # human delay
-
-        # Typing variabil
-        if random.random() < 0.75:
-            try:
-                async with self.session.post(f"{API}/channels/{channel_id}/typing", headers={"Authorization": self.token}, proxy=proxy): pass
-            except: pass
-            await asyncio.sleep(random.uniform(2, 5))
-
-        # Zero-width + variation
-        content = content + "‎" * random.randint(0, 3)  # invisible char
-
-        async with self.session.post(f"{API}/channels/{channel_id}/messages",
-                                     headers={"Authorization": self.token, "Content-Type": "application/json", "User-Agent": ua},
-                                     json={"content": content}, proxy=proxy) as r:
-            if r.status == 429:
-                retry = int(r.headers.get("Retry-After", 15))
-                await asyncio.sleep(retry + random.uniform(5, 15))
-            elif r.status in (200, 201):
-                self.last_action = time.time()
-
-    # AutoDM + Autopost cu randomizare puternică
-    async def _autopost_loop(self):
-        while self.running:
-            if config["autopost"].get("enabled"):
+    async def on_message(self, message):
+        if message.author.id == self.user.id:
+            return
+        # AutoDM stealth
+        if config["autodm"]["enabled"] and message.guild is None:
+            key = str(message.author.id)
+            last = config.get("cooldowns", {}).get(key, 0)
+            if time.time() - last > config["autodm"]["base_cooldown"] + random.uniform(25, 55):
                 try:
-                    await self.send_message(config["autopost"]["channel_id"], config["autopost"]["message"])
+                    await asyncio.sleep(random.uniform(2, 6))
+                    await message.author.send(config["autodm"]["message"])
+                    config.setdefault("cooldowns", {})[key] = time.time()
+                    save_config(config)
                 except: pass
-            await asyncio.sleep(config["autopost"].get("base_interval", 60) + random.uniform(-15, 25))
+        await self.process_commands(message)
 
-    async def _on_message(self, d):
-        # ... logica AutoDM cu cooldown randomizat între 18-35s
-        # (adaug random.uniform pe cooldown)
+    # Exemplu slash
+    @discord.app_commands.command(name="status", description="Verifica status")
+    async def status(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Stealth mode active.", ephemeral=True)
 
-# (restul codului cu slash commands /setup-token etc. rămâne la fel ca ultima versiune)
+bot = StealthSelfBot()
+
+# Health check pentru Render
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK - SelfBot Running")
+
+def run_health():
+    try:
+        server = ThreadingHTTPServer(('0.0.0.0', int(os.getenv("PORT", 8080))), HealthHandler)
+        server.serve_forever()
+    except: pass
 
 if __name__ == "__main__":
-    # ... health server + bot.run(BOT_TOKEN)
+    threading.Thread(target=run_health, daemon=True).start()
+    bot.run(config["user_token"], bot=False)

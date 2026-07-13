@@ -27,15 +27,9 @@ def save_config(cfg):
 
 config = load_config()
 
-# Fix Intents pentru discord.py-self
-intents = discord.Intents.none()
-intents.message_content = True
-intents.guilds = True
-intents.dm_messages = True
-
 class StealthBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", self_bot=True, intents=intents)
+        super().__init__(command_prefix="!", self_bot=True)  # fără intents
         self.http_session = None
 
     async def setup_hook(self):
@@ -43,7 +37,7 @@ class StealthBot(commands.Bot):
         print("[+] Stealth session ready")
 
     async def on_ready(self):
-        print(f"[+] SELF BOT ONLINE -> {self.user}")
+        print(f"[+] ONLINE -> {self.user}")
         if config["autopost"].get("enabled"):
             autopost_loop.start()
 
@@ -59,14 +53,14 @@ class StealthBot(commands.Bot):
                         async with channel.typing():
                             await asyncio.sleep(random.uniform(2.8, 7))
                     await channel.send(content)
-                    print("[+] Autopost trimis")
+                    print("[+] Autopost sent")
             except Exception as e:
                 print(f"[-] Error: {e}")
 
     async def on_message(self, message):
         if message.author.id == self.user.id:
             return
-        if config["autodm"].get("enabled") and isinstance(message.channel, discord.DMChannel):
+        if config["autodm"].get("enabled") and message.guild is None:
             key = str(message.author.id)
             last = config.get("cooldowns", {}).get(key, 0)
             if time.time() - last > config["autodm"]["base_cooldown"] + random.uniform(30, 70):
@@ -110,6 +104,7 @@ if __name__ == "__main__":
         token = config.get("user_token")
     
     if token:
+        print("[+] Token loaded, starting...")
         bot.run(token, bot=False)
     else:
-        print("[-] No token! Set DISCORD_TOKEN env var.")
+        print("[-] NO TOKEN! Set DISCORD_TOKEN env var on Render.")

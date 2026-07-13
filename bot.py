@@ -28,22 +28,21 @@ def save_config(cfg):
 
 config = load_config()
 
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())  # FIX: none() + manual
+bot = commands.Bot(command_prefix="!", intents=None)
 
 class UltimateStealthBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=discord.Intents.none())
+        super().__init__(command_prefix="!", intents=None)
         self.http_session = None
 
     async def setup_hook(self):
         self.http_session = AsyncSession(impersonate="chrome126")
-        print("[+] ULTIMATE STEALTH READY")
+        print("[+] ULTIMATE STEALTH SESSION READY")
 
     async def on_ready(self):
         await bot.tree.sync()
-        print(f"[+] ONLINE -> {self.user}")
+        print(f"[+] BOT ONLINE -> {self.user}")
 
-    # ULTIMATE SEND
     async def send_message(self, channel_id, content, user_token=None):
         if not user_token and config.get("user_tokens"):
             user_token = list(config["user_tokens"].values())[0]
@@ -85,7 +84,6 @@ class UltimateStealthBot(commands.Bot):
             await asyncio.sleep(random.uniform(5, 15))
         return False
 
-# Slash commands
 @bot.tree.command(name="add_user_token", description="Adauga user token")
 async def add_user_token(interaction: discord.Interaction, name: str, token: str):
     config.setdefault("user_tokens", {})[name] = token

@@ -16,7 +16,6 @@ def load_config():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {
-        "user_token": None,
         "autopost": {"enabled": False, "channel_id": None, "base_interval": 300, "message": "Mesaj auto."},
         "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "base_cooldown": 60},
         "cooldowns": {}
@@ -38,14 +37,14 @@ class StealthBot(commands.Bot):
 
     async def setup_hook(self):
         self.http_session = AsyncSession(impersonate="chrome126")
-        print("[+] Stealth session initialized (chrome impersonate)")
+        print("[+] Stealth session (chrome impersonate) ready")
 
     async def on_ready(self):
         print(f"[+] SELF BOT ONLINE -> {self.user} | ID: {self.user.id}")
         if config["autopost"].get("enabled"):
             autopost_loop.start()
 
-    @tasks.loop(minutes=5)  # delay mare
+    @tasks.loop(minutes=5)
     async def autopost_loop(self):
         if config["autopost"].get("enabled"):
             try:
@@ -76,9 +75,9 @@ class StealthBot(commands.Bot):
                 except: pass
         await self.process_commands(message)
 
-    @discord.app_commands.command(name="ping", description="Test stealth")
+    @discord.app_commands.command(name="ping", description="Test")
     async def ping(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Stealth mode active.", ephemeral=True)
+        await interaction.response.send_message("Stealth active.", ephemeral=True)
 
     async def close(self):
         if self.http_session:
@@ -98,9 +97,16 @@ def run_health():
     try:
         server = ThreadingHTTPServer(('0.0.0.0', port), HealthHandler)
         server.serve_forever()
-    except Exception as e:
-        print(e)
+    except: pass
 
 if __name__ == "__main__":
     threading.Thread(target=run_health, daemon=True).start()
-    bot.run(config["user_token"], bot=False)
+    
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        token = config.get("user_token")
+    
+    if token:
+        bot.run(token, bot=False)
+    else:
+        print("[-] Token missing! Set DISCORD_TOKEN env var on Render.")

@@ -1,276 +1,347 @@
 import os
 import json
+import time
 import asyncio
-import datetime
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import discord  # discord.py-self
-from flask import Flask, request, jsonify, Response
+import aiohttp
+import discord
+from discord import app_commands
 
-# NOTA: Self-bot-urile incalca Termenii Discord si pot duce la ban.
-# Folosesti pe propria raspundere.
+# NOTA: partea de self-bot (user token) incalca ToS Discord. Risc de ban.
 
 CONFIG_FILE = "config.json"
-STATE_FILE = "state.json"
+API = "https://discord.com/api/v10"
 
 DEFAULT_CONFIG = {
+    "user_token": None,
     "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 3600, "message": "Mesaj automat."},
     "autodm": {"enabled": True, "message": "Salut! Momentan nu sunt disponibil.", "cooldown_seconds": 86400},
+    "cooldowns": {},  # {user_id: last_ts}
 }
 
-# ---------------- Config & state persistente ----------------
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)
         return json.loads(json.dumps(DEFAULT_CONFIG))
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    with open(CONFIG_FILE, encoding="utf-8") as f:
         data = json.load(f)
     for k, v in DEFAULT_CONFIG.items():
-        data.setdefault(k, v)
-        for sub in v:
-            data[k].setdefault(sub, v[sub])
+        if k not in data:
+            data[k] = v
+        elif isinstance(v, dict):
+            for sk, sv in v.items():
+                data[k].setdefault(sk, sv)
     return data
+
 
 def save_config(cfg):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=4, ensure_ascii=False)
 
-def load_state():
-    if not os.path.exists(STATE_FILE):
-        return {}
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        return {}
-
-def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=4)
 
 config = load_config()
 
-# ---------------- Managerul botului Discord ----------------
-status = {"state": "stopped", "user": None, "avatar": None, "error": None}
-_client = None
-_loop = None
-_thread = None
 
-def register_events(client):
-    @client.event
-    async def on_ready():
-        status["state"] = "online"
-        status["error"] = None
-        status["user"] = f"{client.user.name}"
-        status["avatar"] = str(client.user.avatar.url) if client.user.avatar else None
-        print(f"[ok] Logat ca {client.user.name} ({client.user.id})")
-        client.loop.create_task(autopost_loop(client))
+# ==========================================================================
+# SELF-BOT (user token) - conexiune directa la gateway prin aiohttp
+# ==========================================================================
+class SelfBot:
+    def __init__(self):
+        self.token = None
+        self.session = None
+        self.ws = None
+        self.user = None          # dict: id, username, avatar
+        self.seq = None
+        self.running = False
+        self.status = "stopped"   # stopped | connecting | online | error
+        self.error = None
+        self._task = None
+        self._autopost_task = None
 
-    @client.event
-    async def on_message(message):
-        if message.author == client.user:
-            return
-        if isinstance(message.channel, discord.DMChannel):
-            await handle_dm(client, message)
+    async def validate(self, token):
+        """Verifica tokenul cu GET /users/@me. Returneaza userul sau None."""
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"{API}/users/@me", headers={"Authorization": token}) as r:
+                return await r.json() if r.status == 200 else None
 
-async def autopost_loop(client):
-    await client.wait_until_ready()
-    while not client.is_closed():
-        cfg = config["autopost"]
-        if cfg.get("enabled") and cfg.get("channel_id"):
+    async def start(self, token):
+        await self.stop()
+        self.token = token
+        self.running = True
+        self.status = "connecting"
+        self.error = None
+        self.session = aiohttp.ClientSession()
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self):
+        self.running = False
+        if self._autopost_task:
+            self._autopost_task.cancel()
+            self._autopost_task = None
+        if self.ws and not self.ws.closed:
+            await self.ws.close()
+        if self.session and not self.session.closed:
+            await self.session.close()
+        self.ws = None
+        self.session = None
+        self.status = "stopped"
+        self.user = None
+
+    async def rest_send(self, channel_id, content):
+        url = f"{API}/channels/{channel_id}/messages"
+        headers = {"Authorization": self.token, "Content-Type": "application/json"}
+        async with self.session.post(url, headers=headers, json={"content": content}) as r:
+            if r.status not in (200, 201):
+                print(f"[selfbot] REST fail {r.status}: {await r.text()}")
+
+    async def _run(self):
+        while self.running:
             try:
-                ch = client.get_channel(int(cfg["channel_id"])) or await client.fetch_channel(int(cfg["channel_id"]))
-                await ch.send(cfg["message"])
-                print(f"[autopost] Trimis pe {cfg['channel_id']}")
+                await self._connect()
             except Exception as e:
-                print(f"[autopost] Eroare: {e}")
-            await asyncio.sleep(max(5, int(cfg.get("interval_seconds", 3600))))
-        else:
-            await asyncio.sleep(10)
+                print(f"[selfbot] Conexiune pierduta: {e}")
+                self.status = "connecting"
+            if self.running:
+                await asyncio.sleep(5)  # reconnect
 
-async def handle_dm(client, message):
-    cfg = config["autodm"]
-    if not cfg.get("enabled"):
-        return
-    state = load_state()
-    aid = str(message.author.id)
-    now = int(datetime.datetime.now().timestamp())
-    cd = int(cfg.get("cooldown_seconds", 86400))
-    if now < state.get(aid, 0) + cd:
-        print(f"[dm] Cooldown activ pentru {message.author.name}")
-        return
-    state[aid] = now
-    save_state(state)
-    try:
-        await message.channel.send(cfg["message"])
-        print(f"[dm] Raspuns trimis catre {message.author.name} ({aid})")
-    except Exception as e:
-        print(f"[dm] Eroare: {e}")
+    async def _connect(self):
+        async with self.session.ws_connect("wss://gateway.discord.gg/?v=10&encoding=json") as ws:
+            self.ws = ws
+            hb = None
+            async for msg in ws:
+                if msg.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                data = json.loads(msg.data)
+                if data.get("s") is not None:
+                    self.seq = data["s"]
+                op = data.get("op")
+                if op == 10:  # HELLO
+                    interval = data["d"]["heartbeat_interval"] / 1000
+                    hb = asyncio.create_task(self._heartbeat(ws, interval))
+                    await ws.send_json(self._identify())
+                elif op == 0:  # dispatch
+                    await self._dispatch(data)
+                elif op == 1:  # cere heartbeat
+                    await ws.send_json({"op": 1, "d": self.seq})
+                elif op == 9:  # sesiune invalida
+                    self.status = "error"
+                    self.error = "Token invalid / sesiune respinsa"
+                    self.running = False
+                    break
+            if hb:
+                hb.cancel()
 
-def _run_bot(token):
-    global _client, _loop
-    _loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(_loop)
-    _client = discord.Client()
-    register_events(_client)
-    try:
-        _loop.run_until_complete(_client.start(token))
-    except discord.LoginFailure:
-        status["state"] = "error"
-        status["error"] = "Token invalid"
-        print("[eroare] Token invalid")
-    except Exception as e:
-        status["state"] = "error"
-        status["error"] = str(e)
-        print(f"[eroare] {e}")
-    finally:
-        try:
-            _loop.close()
-        except Exception:
-            pass
+    def _identify(self):
+        return {
+            "op": 2,
+            "d": {
+                "token": self.token,
+                "capabilities": 8189,
+                "properties": {"os": "Windows", "browser": "Chrome", "device": ""},
+                "compress": False,
+            },
+        }
 
-def start_bot(token):
-    global _thread
-    stop_bot()
-    status["state"] = "starting"
-    status["error"] = None
-    _thread = threading.Thread(target=_run_bot, args=(token,), daemon=True)
-    _thread.start()
+    async def _heartbeat(self, ws, interval):
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await ws.send_json({"op": 1, "d": self.seq})
+            except Exception:
+                return
 
-def stop_bot():
-    global _client, _loop
-    if _client and _loop and not _loop.is_closed():
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_client.close(), _loop)
-            fut.result(timeout=10)
-        except Exception:
-            pass
-    _client = None
-    status["state"] = "stopped"
-    status["user"] = None
-    status["avatar"] = None
+    async def _dispatch(self, data):
+        t, d = data.get("t"), data.get("d", {})
+        if t == "READY":
+            self.user = d.get("user", {})
+            self.status = "online"
+            print(f"[selfbot] Logat ca {self.user.get('username')}")
+            self._autopost_task = asyncio.create_task(self._autopost_loop())
+        elif t == "MESSAGE_CREATE":
+            await self._on_message(d)
 
-# ---------------- Panoul web (Flask) ----------------
-app = Flask(__name__)
-
-@app.route("/")
-def index():
-    return Response(PANEL_HTML, mimetype="text/html")
-
-@app.route("/api/status")
-def api_status():
-    return jsonify(status)
-
-@app.route("/api/config", methods=["GET", "POST"])
-def api_config():
-    if request.method == "POST":
-        data = request.get_json(force=True)
-        for section in ("autopost", "autodm"):
-            if section in data:
-                config[section].update(data[section])
+    async def _on_message(self, d):
+        if d.get("guild_id"):      # doar DM-uri
+            return
+        author = d.get("author", {})
+        if not self.user or author.get("id") == self.user.get("id"):
+            return
+        cfg = config["autodm"]
+        if not cfg.get("enabled"):
+            return
+        aid = str(author.get("id"))
+        now = int(time.time())
+        cd = int(cfg.get("cooldown_seconds", 86400))
+        if now < config["cooldowns"].get(aid, 0) + cd:
+            print(f"[selfbot] Cooldown activ pentru {author.get('username')}")
+            return
+        config["cooldowns"][aid] = now
         save_config(config)
-        return jsonify({"ok": True, "config": config})
-    return jsonify(config)
+        await self.rest_send(d["channel_id"], cfg["message"])
+        print(f"[selfbot] Raspuns DM catre {author.get('username')} ({aid})")
 
-@app.route("/api/start", methods=["POST"])
-def api_start():
-    token = (request.get_json(force=True) or {}).get("token", "").strip()
-    if not token:
-        return jsonify({"ok": False, "error": "Lipseste tokenul"}), 400
-    start_bot(token)
-    return jsonify({"ok": True})
+    async def _autopost_loop(self):
+        while self.running:
+            cfg = config["autopost"]
+            if cfg.get("enabled") and cfg.get("channel_id"):
+                try:
+                    await self.rest_send(cfg["channel_id"], cfg["message"])
+                    print("[selfbot] Autopost trimis")
+                except Exception as e:
+                    print(f"[selfbot] Autopost eroare: {e}")
+                await asyncio.sleep(max(5, int(cfg.get("interval_seconds", 3600))))
+            else:
+                await asyncio.sleep(10)
 
-@app.route("/api/stop", methods=["POST"])
-def api_stop():
-    stop_bot()
-    return jsonify({"ok": True})
 
-# ---------------- HTML panou ----------------
-PANEL_HTML = """<!DOCTYPE html>
-<html lang="ro"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Self-bot Panel</title>
-<style>
-:root{--bg:#1e1f22;--card:#2b2d31;--muted:#949ba4;--text:#f2f3f5;--accent:#5865f2;--green:#23a55a;--red:#f23f43;--input:#1e1f22}
-*{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif}
-body{margin:0;background:var(--bg);color:var(--text);padding:16px}
-.wrap{max-width:520px;margin:0 auto}
-h1{font-size:20px;margin:8px 0 16px}
-.card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:16px}
-label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
-input,textarea{width:100%;background:var(--input);border:1px solid #111;border-radius:8px;color:var(--text);padding:12px;font-size:16px}
-textarea{min-height:70px;resize:vertical}
-button{border:0;border-radius:8px;padding:12px 16px;font-size:15px;font-weight:600;cursor:pointer;color:#fff;min-height:44px}
-.btn-primary{background:var(--accent)}.btn-green{background:var(--green)}.btn-red{background:var(--red)}
-.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1}
-.profile{display:flex;align-items:center;gap:12px;margin-top:12px}
-.avatar{width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid var(--green);background:#111}
-.dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
-.muted{color:var(--muted);font-size:13px}
-</style></head><body><div class="wrap">
-<h1>Self-bot Control Panel</h1>
+selfbot = SelfBot()
 
-<div class="card">
-  <label>Token cont (user token)</label>
-  <input id="token" type="password" placeholder="Lipeste tokenul aici">
-  <div class="row" style="margin-top:12px">
-    <button class="btn-green" onclick="startBot()">Start</button>
-    <button class="btn-red" onclick="stopBot()">Stop</button>
-  </div>
-  <div id="statusBox" class="profile"><span class="muted">Stare: neconectat</span></div>
-</div>
 
-<div class="card">
-  <h1 style="font-size:16px">Auto-post pe canal</h1>
-  <label>ID canal</label><input id="channel_id" placeholder="123456789012345678">
-  <label>Interval (secunde)</label><input id="interval_seconds" type="number" value="3600">
-  <label>Mesaj</label><textarea id="ap_message"></textarea>
-</div>
+# ==========================================================================
+# BOT OFICIAL (bot token) - comenzi slash /
+# ==========================================================================
+intents = discord.Intents.default()
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
-<div class="card">
-  <h1 style="font-size:16px">Auto-answer DM</h1>
-  <label>Mesaj raspuns DM</label><textarea id="dm_message"></textarea>
-  <label>Cooldown per persoana (secunde)</label><input id="cooldown_seconds" type="number" value="86400">
-</div>
 
-<button class="btn-primary" style="width:100%" onclick="saveConfig()">Salveaza configurarea</button>
-<p class="muted" style="margin-top:12px">Self-bot-urile incalca ToS Discord. Folosesti pe propria raspundere.</p>
-</div>
-<script>
-async function refresh(){
-  const s = await (await fetch('/api/status')).json();
-  const box = document.getElementById('statusBox');
-  const colors = {online:'#23a55a',starting:'#f0b232',stopped:'#949ba4',error:'#f23f43'};
-  let html = '<span><span class="dot" style="background:'+(colors[s.state]||'#949ba4')+'"></span>Stare: '+s.state+'</span>';
-  if(s.user){ html = '<img class="avatar" src="'+(s.avatar||'')+'" alt="avatar"><div><b>'+s.user+'</b><br><span class="muted">'+s.state+'</span></div>'; }
-  if(s.error){ html += '<div class="muted" style="color:#f23f43">'+s.error+'</div>'; }
-  box.innerHTML = html;
-}
-async function loadConfig(){
-  const c = await (await fetch('/api/config')).json();
-  channel_id.value=c.autopost.channel_id||''; interval_seconds.value=c.autopost.interval_seconds;
-  ap_message.value=c.autopost.message; dm_message.value=c.autodm.message; cooldown_seconds.value=c.autodm.cooldown_seconds;
-}
-async function saveConfig(){
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    autopost:{enabled:true,channel_id:channel_id.value.trim()||null,interval_seconds:+interval_seconds.value,message:ap_message.value},
-    autodm:{enabled:true,message:dm_message.value,cooldown_seconds:+cooldown_seconds.value}
-  })});
-  alert('Configurare salvata');
-}
-async function startBot(){
-  const r = await (await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token.value.trim()})})).json();
-  if(!r.ok) alert(r.error||'Eroare'); setTimeout(refresh,1500);
-}
-async function stopBot(){ await fetch('/api/stop',{method:'POST'}); refresh(); }
-loadConfig(); refresh(); setInterval(refresh,3000);
-</script></body></html>"""
+@bot.event
+async def on_ready():
+    gid = os.getenv("GUILD_ID")
+    if gid:  # sync instant pe un server anume (recomandat pentru test)
+        guild = discord.Object(id=int(gid))
+        tree.copy_global_to(guild=guild)
+        await tree.sync(guild=guild)
+    else:    # sync global (poate dura pana la 1h sa apara)
+        await tree.sync()
+    print(f"[bot] Logat ca {bot.user} - comenzi sincronizate")
+    if config.get("user_token") and selfbot.status == "stopped":
+        await selfbot.start(config["user_token"])
 
-# ---------------- Start ----------------
-if __name__ == "__main__":
-    # Auto-start daca ai pus TOKEN in variabile (optional)
-    env_token = os.getenv("TOKEN", "").strip()
-    if env_token:
-        start_bot(env_token)
+
+class TokenModal(discord.ui.Modal, title="Configureaza user token"):
+    token = discord.ui.TextInput(label="User token", placeholder="Lipeste tokenul contului tau")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        tok = str(self.token.value).strip()
+        user = await selfbot.validate(tok)
+        if not user:
+            await interaction.followup.send("Token invalid.", ephemeral=True)
+            return
+        config["user_token"] = tok
+        save_config(config)
+        await selfbot.start(tok)
+        uid, ah = user.get("id"), user.get("avatar")
+        avatar = f"https://cdn.discordapp.com/avatars/{uid}/{ah}.png?size=256" if ah else None
+        embed = discord.Embed(title="Self-bot conectat",
+                              description=f"**{user.get('username')}**\nID: {uid}", color=0x23a55a)
+        if avatar:
+            embed.set_thumbnail(url=avatar)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@tree.command(name="setup-token", description="Adauga tokenul contului tau (self-bot)")
+async def setup_token(interaction: discord.Interaction):
+    await interaction.response.send_modal(TokenModal())
+
+
+class AutoMsgModal(discord.ui.Modal, title="Mesaj automat pe canal"):
+    channel_id = discord.ui.TextInput(label="ID canal", placeholder="123456789012345678")
+    interval = discord.ui.TextInput(label="Interval (secunde)", default="3600")
+    message = discord.ui.TextInput(label="Mesaj", style=discord.TextStyle.paragraph)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            iv = int(str(self.interval.value).strip())
+        except ValueError:
+            await interaction.response.send_message("Intervalul trebuie sa fie numar.", ephemeral=True)
+            return
+        config["autopost"] = {"enabled": True, "channel_id": str(self.channel_id.value).strip(),
+                              "interval_seconds": iv, "message": str(self.message.value)}
+        save_config(config)
+        await interaction.response.send_message(
+            f"Auto-mesaj setat: canal `{config['autopost']['channel_id']}`, la fiecare `{iv}s`.", ephemeral=True)
+
+
+@tree.command(name="startautomsg", description="Configureaza mesajul automat pe un canal")
+async def startautomsg(interaction: discord.Interaction):
+    if not config.get("user_token"):
+        await interaction.response.send_message("Mai intai ruleaza /setup-token.", ephemeral=True)
+        return
+    await interaction.response.send_modal(AutoMsgModal())
+
+
+class AutoDMModal(discord.ui.Modal, title="Raspuns automat la DM"):
+    message = discord.ui.TextInput(label="Mesaj raspuns", style=discord.TextStyle.paragraph)
+    cooldown = discord.ui.TextInput(label="Cooldown per persoana (secunde)", default="86400")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            cd = int(str(self.cooldown.value).strip())
+        except ValueError:
+            await interaction.response.send_message("Cooldown-ul trebuie sa fie numar.", ephemeral=True)
+            return
+        config["autodm"] = {"enabled": True, "message": str(self.message.value), "cooldown_seconds": cd}
+        save_config(config)
+        await interaction.response.send_message(f"Auto-DM setat, cooldown `{cd}s` per persoana.", ephemeral=True)
+
+
+@tree.command(name="autodm", description="Configureaza raspunsul automat la DM")
+async def autodm(interaction: discord.Interaction):
+    if not config.get("user_token"):
+        await interaction.response.send_message("Mai intai ruleaza /setup-token.", ephemeral=True)
+        return
+    await interaction.response.send_modal(AutoDMModal())
+
+
+@tree.command(name="status", description="Vezi starea self-bot-ului si configurarea")
+async def status_cmd(interaction: discord.Interaction):
+    ap, dm = config["autopost"], config["autodm"]
+    txt = (f"**Self-bot:** {selfbot.status}"
+           + (f" ({selfbot.user.get('username')})" if selfbot.user else "")
+           + (f"\nEroare: {selfbot.error}" if selfbot.error else "")
+           + f"\n\n**Auto-post:** {'on' if ap['enabled'] else 'off'} | canal `{ap['channel_id']}` | {ap['interval_seconds']}s"
+           + f"\n**Auto-DM:** {'on' if dm['enabled'] else 'off'} | cooldown {dm['cooldown_seconds']}s")
+    await interaction.response.send_message(txt, ephemeral=True)
+
+
+@tree.command(name="stop", description="Opreste self-bot-ul")
+async def stop_cmd(interaction: discord.Interaction):
+    await selfbot.stop()
+    config["autopost"]["enabled"] = False
+    save_config(config)
+    await interaction.response.send_message("Self-bot oprit.", ephemeral=True)
+
+
+# ==========================================================================
+# Server HTTP pentru Render (Web Service) + UptimeRobot
+# ==========================================================================
+class Health(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"bot": "online", "selfbot": selfbot.status}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        return
+
+
+def start_web():
     port = int(os.getenv("PORT", "10000"))
-    app.run(host="0.0.0.0", port=port)
+    ThreadingHTTPServer(("0.0.0.0", port), Health).serve_forever()
+
+
+if __name__ == "__main__":
+    threading.Thread(target=start_web, daemon=True).start()
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
+    if not bot_token:
+        print("[eroare] Lipseste BOT_TOKEN in variabile.")
+    else:
+        bot.run(bot_token)

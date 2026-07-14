@@ -1,25 +1,16 @@
 {
   "user_token": null,
   "proxies": [
-    "http://46.47.197.210:3128",
-    "http://79.174.12.190:80",
-    "http://2.56.178.88:808",
-    "socks5://195.19.50.180:1080",
-    "socks4://37.193.125.68:1090",
-    "socks5://37.220.86.195:1080",
-    "http://176.99.134.183:8090",
-    "http://31.28.4.192:80"
+    "http://45.79.1.23:3128",
+    "http://167.172.248.53:3128",
+    "http://139.59.128.40:3128",
+    "socks5://167.172.248.53:1080",
+    "http://165.22.50.226:3128",
+    "http://159.65.241.82:3128",
+    "http://138.68.161.60:3128",
+    "socks5://159.65.241.82:1080"
   ],
-  "autopost": {
-    "enabled": false,
-    "channel_id": "",
-    "interval_seconds": 60,
-    "message": "Hey, just checking in."
-  },
-  "autodm": {
-    "enabled": true,
-    "message": "Hey! Sorry, I'm a bit busy right now.",
-    "cooldown_seconds": 25
-  },
+  "autopost": {"enabled": false, "channel_id": "", "interval_seconds": 300, "messages": ["Hey, just checking in.", "What's up?", "Test message here."]},
+  "autodm": {"enabled": true, "message": "Hey! Sorry, I'm a bit busy right now.", "cooldown_seconds": 120},
   "cooldowns": {}
 }

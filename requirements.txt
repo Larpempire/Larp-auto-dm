@@ -1,4 +1,3 @@
 discord.py
 aiohttp
-httpx
 fake-useragent

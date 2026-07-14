@@ -82,6 +82,9 @@ class SelfBot:
         self.status = "connecting"
         self.session = aiohttp.ClientSession()
         self._task = asyncio.create_task(self._run())
+        # Pornește autopost imediat (fără să aștepte gateway READY)
+        self._autopost_task = asyncio.create_task(self._autopost_loop())
+        logger.info("[+] SelfBot started - autopost loop active")
 
     async def stop(self):
         self.running = False
@@ -193,7 +196,6 @@ class SelfBot:
             self.user = d.get("user", {})
             self.status = "online"
             logger.info(f"[+] Logged in as {self.user.get('username')}")
-            self._autopost_task = asyncio.create_task(self._autopost_loop())
         elif t == "MESSAGE_CREATE":
             await self._on_message(d)
 

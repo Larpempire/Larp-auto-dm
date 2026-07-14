@@ -18,20 +18,22 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s | %(levelname)s | %
                     handlers=[logging.FileHandler("stealth.log", encoding="utf-8"), logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
+ua = UserAgent()
+
 DEFAULT_CONFIG = {
     "user_token": None,
     "proxies": [
-        "http://46.47.197.210:3128",
-        "http://79.174.12.190:80",
-        "http://2.56.178.88:808",
-        "socks5://195.19.50.180:1080",
-        "socks4://37.193.125.68:1090",
-        "socks5://37.220.86.195:1080",
-        "http://176.99.134.183:8090",
-        "http://31.28.4.192:80"
+        "http://45.79.1.23:3128",
+        "http://167.172.248.53:3128",
+        "http://139.59.128.40:3128",
+        "socks5://167.172.248.53:1080",
+        "http://165.22.50.226:3128",
+        "http://159.65.241.82:3128",
+        "http://138.68.161.60:3128",
+        "socks5://159.65.241.82:1080"
     ],
-    "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 180, "message": "Hey, just checking in."},
-    "autodm": {"enabled": True, "message": "Hey! Sorry, I'm a bit busy right now.", "cooldown_seconds": 90},
+    "autopost": {"enabled": False, "channel_id": None, "interval_seconds": 300, "messages": ["Hey, just checking in.", "What's up everyone?", "Test message here."]},
+    "autodm": {"enabled": True, "message": "Hey! Sorry, I'm a bit busy right now.", "cooldown_seconds": 120},
     "cooldowns": {}
 }
 
@@ -55,8 +57,6 @@ def save_config(cfg):
 
 config = load_config()
 
-ua = UserAgent()
-
 class UltimateSelfBot:
     def __init__(self):
         self.token = None
@@ -69,14 +69,8 @@ class UltimateSelfBot:
         self.running = True
         self.status = "online"
         self.session = aiohttp.ClientSession()
-        logger.info("[ULTIMATE] SelfBot started - HTTP ONLY MODE")
+        logger.info("[ULTIMATE] Max Stealth Mode Activated")
         asyncio.create_task(self._autopost_loop())
-
-    async def stop(self):
-        self.running = False
-        self.status = "stopped"
-        if self.session:
-            await self.session.close()
 
     async def send_message(self, channel_id, base_content):
         proxy = random.choice(config.get("proxies", [None]))
@@ -87,7 +81,9 @@ class UltimateSelfBot:
             "X-Super-Properties": "eyJvc3MiOiJXaW5kb3dzIiwgImJyb3dzZXIiOiJDaHJvbWUiLCAiZGV2aWNlIjoiZGVza3RvcCJ9"
         }
 
-        content = base_content + "‎" * random.randint(0, 12) + random.choice(["", "🙂", "🔥", "👀"])
+        content = base_content + "‎" * random.randint(0, 12) + random.choice(["", "🙂", "🔥", "👀", "👍"])
+
+        await asyncio.sleep(random.uniform(2.0, 6.5))
 
         try:
             async with self.session.post(
@@ -95,11 +91,11 @@ class UltimateSelfBot:
                 headers={"Authorization": self.token},
                 proxy=proxy
             ):
-                await asyncio.sleep(random.uniform(2.0, 6.5))
+                await asyncio.sleep(random.uniform(2.5, 7.5))
         except:
             pass
 
-        await asyncio.sleep(random.uniform(1.8, 5.2))
+        await asyncio.sleep(random.uniform(1.8, 5.8))
 
         try:
             async with self.session.post(
@@ -109,7 +105,7 @@ class UltimateSelfBot:
                 proxy=proxy
             ) as r:
                 if r.status in (200, 201):
-                    logger.info(f"[+] SENT SUCCESS to {channel_id}")
+                    logger.info(f"[+] SUCCESS Sent to {channel_id}")
                 else:
                     logger.warning(f"[-] Failed {r.status}")
         except Exception as e:
@@ -119,8 +115,9 @@ class UltimateSelfBot:
         while self.running:
             cfg = config["autopost"]
             if cfg.get("enabled") and cfg.get("channel_id"):
-                await self.send_message(cfg["channel_id"], cfg["message"])
-            await asyncio.sleep(cfg.get("interval_seconds", 180) + random.uniform(-20, 40))
+                msg = random.choice(cfg.get("messages", [cfg.get("message", "Test")]))
+                await self.send_message(cfg["channel_id"], msg)
+            await asyncio.sleep(cfg.get("interval_seconds", 300) + random.uniform(-40, 60))
 
 selfbot = UltimateSelfBot()
 
@@ -135,7 +132,6 @@ async def on_ready():
     if config.get("user_token"):
         await selfbot.start(config["user_token"])
 
-# Comenzi (setup, autopost, autodm, status, stop) - aceleași ca înainte
 class TokenModal(discord.ui.Modal, title="Setup Token"):
     token = discord.ui.TextInput(label="User Token")
     async def on_submit(self, interaction: discord.Interaction):
@@ -152,7 +148,7 @@ async def setup_token(interaction: discord.Interaction):
 
 @tree.command(name="autopost", description="Set autopost")
 async def autopost_cmd(interaction: discord.Interaction, enabled: bool, channel_id: str, interval: int, message: str):
-    config["autopost"] = {"enabled": enabled, "channel_id": channel_id, "interval_seconds": interval, "message": message}
+    config["autopost"] = {"enabled": enabled, "channel_id": channel_id, "interval_seconds": interval, "messages": [message]}
     save_config(config)
     await interaction.response.send_message("Autopost set.", ephemeral=True)
 
@@ -165,7 +161,6 @@ async def stop_cmd(interaction: discord.Interaction):
     await selfbot.stop()
     await interaction.response.send_message("Stopped.", ephemeral=True)
 
-# Health Server
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         body = json.dumps({"status": "alive"}).encode()
